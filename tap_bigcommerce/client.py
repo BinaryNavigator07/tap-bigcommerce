@@ -2,7 +2,7 @@
 from functools import wraps
 
 import singer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil.parser import parse
 from tap_bigcommerce.utilities import to_utc
 from tap_bigcommerce.bigcommerce import Bigcommerce
@@ -47,7 +47,10 @@ def parse_date_string_arguments(fields):
                             "parse_date_string_arguments expects string value."
                             "{} provided"
                         ).format(value))
-                    kwargs[key] = parse(value)
+                    dt = parse(value)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    kwargs[key] = dt
             return method(*args, **kwargs)
         return parse_dt
 
@@ -69,6 +72,8 @@ class BigCommerce(Client):
         self.access_token = access_token
         self.store_hash = store_hash
         self.utcnow = singer.utils.now()
+        if self.utcnow.tzinfo is None:
+            self.utcnow = self.utcnow.replace(tzinfo=timezone.utc)
         self._reset_session()
 
     def _reset_session(self):
@@ -84,10 +89,14 @@ class BigCommerce(Client):
             raise e
 
     def iterdates(self, start_date):
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=self.utcnow.tzinfo)
+
         for n in range(max(int((self.utcnow - start_date).days), 1)):
             start = start_date + timedelta(n)
             end = start_date + timedelta(n + 1)
             yield start, min(end, self.utcnow)
+
 
     @parse_date_string_arguments('bookmark')
     @validate

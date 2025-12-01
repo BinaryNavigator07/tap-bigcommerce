@@ -282,6 +282,10 @@ class Bigcommerce():
             elif resp.status_code == 429:
                 raise BigCommerceRateLimitException(resp)
             else:
+                try:
+                    logger.error("BigCommerce error %s: %s", resp.status_code, resp.text)
+                except Exception:
+                    pass
                 raise HTTPError(resp)
         else:
             resp.data = resp.json()
@@ -333,8 +337,10 @@ class Bigcommerce():
             return future.result()
         else:
             return future
+    def resource(self, name, params=None, async_sub_resources=True):
+        if params is None:
+            params = {}
 
-    def resource(self, name, params={}, async_sub_resources=True):
         resource = self.endpoints.get(name, {})
         version = resource.get('version', 3)
         path = resource.get('path', name)
@@ -361,25 +367,32 @@ class Bigcommerce():
             )
 
         requests_need = self.results_per_page * sub_resources
+        base_params = dict(params)
 
         page = 0
         while True:
             error_count = 0
             page += 1
 
-            params = {**params, **{
+            page_params = {
+                **base_params,
                 'page': page,
-                'limit': self.results_per_page
-            }}
+                'limit': self.results_per_page,
+            }
+
+            logger.info(
+                "BigCommerce request to %s with params %s",
+                url,
+                page_params
+            )
 
             try:
-                r = self.get(url, params).result()
+                r = self.get(url, page_params).result()
             except BigCommerceRateLimitException as e:
                 delay = (self.rate_limit['window_size_ms'] / 1000)
-                logger.error((
-                    "BigCommerce rate limit exceeded. "
-                    "Waiting {:.2f}"
-                ).format(delay))
+                logger.error(
+                    "BigCommerce rate limit exceeded. Waiting {:.2f}".format(delay)
+                )
                 time.sleep(delay + 1)
                 # retry the same page
                 page -= 1
@@ -388,10 +401,10 @@ class Bigcommerce():
             if self.rate_limit['requests_remaining'] is not None:
                 if (self.rate_limit['requests_remaining'] - requests_need) < 1:
                     sec = self.rate_limit['ms_until_reset'] / 1000
-                    logger.warning((
+                    logger.warning(
                         "Not enough requests available to complete request. "
-                        "Waiting {:.2f} sec"
-                    ).format(sec))
+                        "Waiting {:.2f} sec".format(sec)
+                    )
                     self.request_count = 0
                     time.sleep(sec)
 
